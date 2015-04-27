@@ -16,14 +16,15 @@ M_PI =  3.1415926535897932385
 open_sockets = []
 
 #add the objects for ephem
-ct = ephem.city('Cape Town')
-ct.long="33:57:28.42"
-ct.lat="-18:27:40.51"
+ct = ephem.city('Buenos Aires')
+ct.long="-57:55:59.95"
+ct.lat="-34:54:29.97"
 #ct.elevation = 106
 
 #Get the arduino serial port
 #Use an int 1 value below the actual com port
-arduino = serial.Serial(7, 9600)
+arduino = serial.Serial('/dev/ttyUSB0', 9600)
+#arduino = open('/tmp/arduino.bin','w')
 
 # AF_INET means IPv4.
 # SOCK_STREAM means a TCP connection.
@@ -47,6 +48,7 @@ listening_socket.listen(5)
 current_position = []
 
 def printit(ra_int, dec_int):
+    print ra_int, dec_int
     h = ra_int
     d = floor(0.5 + dec_int*(360*3600*1000/4294967296.0));
     dec_sign = ''
@@ -61,50 +63,84 @@ def printit(ra_int, dec_int):
             h += 0x80000000;
         d = -d;
         dec_sign = '-';
-    
-    
+
+
     h = floor(0.5+h*(24*3600*10000/4294967296.0));
     ra_ms = h % 10000; h /= 10000;
     ra_s = h % 60; h /= 60;
     ra_m = h % 60; h /= 60;
-    
+
     h %= 24;
     dec_ms = d % 1000; d /= 1000;
     dec_s = d % 60; d /= 60;
     dec_m = d % 60; d /= 60;
-    
+
     ephemra = str(trunc(h)) +':'+ str(trunc(ra_m)) +':'+ str(trunc(ra_s)) +'.'+ str(trunc(ra_ms))
     ephemdec = str(dec_sign) + str(trunc(d)) +':'+ str(trunc(dec_m)) +':'+ str(trunc(dec_s)) +'.'+ str(trunc(dec_ms))
-    
-    
+
+
     #print("ra =", h,"h", ra_m,"m",ra_s,".",ra_ms, sep=" ")
     #print("dec =",dec_sign, d,"d", dec_m,"m",dec_s,".",dec_ms)
     #print("ephemra =" + ephemra)
     #print("ephemdec =" +ephemdec)
-    
+
     star = ephem.Equatorial(ephemra, ephemdec)
     body = ephem.FixedBody()
     body._ra = star.ra
     body._dec = star.dec
-    body._epoch = star.epoch    
+    body._epoch = star.epoch
     body.compute(ct)
     #print("azimuth= " + str(body.az))
     #print("altitude= " + str(body.alt))
-    altToArd(body.alt)
-    azToArd(body.az)
-    
+    #altToArd(body.alt)
+    #time.sleep(60)
+    #azToArd(body.az)
+    #print body.alt
+    #print body.az
+    if body.alt > 0:
+        msg = calculateAltAz(body.alt, body.az)
+        #print bytearray(msg).__repr__()
+        print msg
+        arduino.write(bytearray(msg))
+    else:
+        print "Body below horizon!"
+
+
 #NB: The methods makes 2 assumptions
 #1) The motor steps 0.9 degrees,
 #2) The gear ratio on the azimuth is 2:1
 #I have commented where these values come into play. adjust them as need be
 
+def calculateAltAz(alt, az):
+    nalt = str(alt)
+    nalt = nalt[:nalt.index(':')]
+    nalt = int(nalt)/360.0*3200.0   # Conversion of 360 degrees to 400 degrees
+    nalt = int(nalt)
+
+    naz = str(az)
+    naz = naz[:naz.index(':')]
+    naz = int(naz)/360.0*3200.0     # Conversion of 360 degrees to 400 degrees
+    naz = int(naz)                # Gearing ratio is 2
+
+    print "xPos = " + str(naz)
+    print "yPos = " + str(nalt)
+    msg = [0]*6
+    msg[0] = 'x'
+    msg[1] = naz % 256
+    msg[2] = naz >> 8 % 256
+    msg[3] = 'y'
+    msg[4] = nalt % 256
+    msg[5] = nalt >> 8 % 256
+    return msg
+
 def altToArd(alt):
     nalt = str(alt)
     nalt = nalt[:nalt.index(':')]
     arduino.write(b'y')
-    nalt = int(nalt)/360*400 #Conversion of 360 degrees to 400 degrees
     time.sleep(0.01)
-    for i in range(0, int(nalt)):
+    nalt = int(nalt)/360.0*3200.0 #Conversion of 360 degrees to 400 degrees
+    print "ysteps = " + str(nalt)
+    for i in range(0, int(nalt)*2):
         arduino.write(b's')
         time.sleep(0.01)
     arduino.write(b'e')
@@ -114,13 +150,13 @@ def azToArd(az):
     naz = naz[:naz.index(':')]
     arduino.write(b'x')
     time.sleep(0.01)
-    naz = int(naz)/360*400 #Conversion of 360 degrees to 400 degrees
+    naz = int(naz)/360.0*3200.0 #Conversion of 360 degrees to 400 degrees
+    print "xsteps = " + str(naz)
     for i in range(0, int(naz)*2): #Gearing ratio is 2
         arduino.write(b's')
         time.sleep(0.01)
     arduino.write(b'e')
-    print('data sent')
-    
+
 
 while True:
     # Waits for I/O being available for reading from any socket object.
@@ -135,7 +171,6 @@ while True:
                 open_sockets.remove(i)
                 print("Connection closed")
             else:
-                #print( repr(data))
                 data = struct.unpack("3iIi", data)
                 #print(data)
                 #print("%x, %o" % (data[3], data[3]))
@@ -147,12 +182,14 @@ while True:
                 desired_pos.append(cos(ra)*cdec)
                 desired_pos.append(sin(ra)*cdec)
                 desired_pos.append(sin(dec))
+                #print desired_pos
+                #print data[3], data[4]
                 printit(data[3], data[4])
                 #print(desired_pos)
-                
+
                 #Set desired position and get current
                 #send current position back to client
-                #update current position                
+                #update current position
                 reply = struct.pack("3iIii", 24, 0, int(time.time()), data[3], data[4], 0)
                 #print (repr(reply))
                 #print(i.send(reply))

@@ -2,7 +2,7 @@
 Arduino Motor Controller
 For Arduino-Stellarium integration
 Keegan Crankshaw, 2015
-http://github.com/KCrankshaw
+Joaquin Bogado, 2015
 */
 
 //Initialize pin variables
@@ -12,16 +12,17 @@ const byte yDir = 6;
 const byte xMotor = 5;
 const byte yMotor = 7;
 
+const byte laser = 12;
+
 //The total steps the motor has to make
 int tSteps = 0;
 
-//data transfer
-char t = 'a'; //Needs to be set to a literal
-char mot = 't'; //random, not x or y on purpose
+//byte array buffer for comunications
+byte msg[10];
 
 //Assuming the device has been aligned
-int xPos=0;
-int yPos=0;
+int xAbsPos=0;
+int yAbsPos=0;
 
 //Setup Loop
 void setup(){
@@ -33,94 +34,69 @@ void setup(){
     pinMode(yDir, OUTPUT);
     pinMode(xMotor, OUTPUT);
     pinMode(yMotor, OUTPUT);
+    
+    pinMode(laser, OUTPUT);
   
   //Set initial direction
     digitalWrite(xDir, LOW);
     digitalWrite(yDir, LOW);
-
+    digitalWrite(laser, HIGH);
 }
 
 
 void loop() {
- while(Serial.available()) {
-   if(Serial.available() >0){
-     t = Serial.read();
-     
-     if (t == 'e' ){
-       analyzeInput();
-       
-     }
-     else if(t=='s'){
-       tSteps=tSteps+1;
-     }
-     else if(t=='x' || t=='y'){
-       mot = t;
-       
-     }
-   }
- }
-
+  int xPos = 0;
+  int yPos = 0;
+  while(Serial.available()) {
+    if(Serial.available() >= 6){
+      for (int i = 0; i < 6; i++){
+        msg[i] = Serial.read();
+      }
+      // assuming msg = 'x'byte0byte1'y'byte0byte1
+      xPos = msg[1] + (msg[2] << 8);
+      yPos = msg[4] + (msg[5] << 8);
+      int xSteps = xPos - xAbsPos;
+      xAbsPos += xSteps;
+      int ySteps = yPos - yAbsPos;
+      yAbsPos += ySteps;
+      Serial.print(xSteps);
+      Serial.print('|');
+      Serial.print(ySteps);
+      Serial.print('|');
+      moveMotors(xSteps, ySteps);
+    }
+  }
 }
 
-void analyzeInput(){
-  int steps = 0;
-  boolean dir = false;
-
-  
-  if(mot == 'x'){
-    if(max(xPos, tSteps)==xPos){//We're past the position we need to be
-      dir = false;
-      steps = xPos - tSteps;
-      
+void moveMotors(int xSteps, int ySteps){
+  bool xdir, ydir;
+  digitalWrite(laser,LOW);
+  (xSteps < 0) ? xdir = false : xdir = true;
+  (ySteps < 0) ? ydir = false : ydir = true;
+  digitalWrite(xDir, xdir);
+  digitalWrite(yDir, ydir);
+  int xRemaining = abs(xSteps);
+  int yRemaining = abs(ySteps);
+  while (xRemaining || yRemaining){
+    if (xRemaining){
+      digitalWrite(xMotor, HIGH);
+      digitalWrite(xMotor, LOW);
+      delay(10);
+      //Serial.write("xstep");
+      xRemaining--;
     }
-    else if(max(xPos, tSteps)==tSteps){ //we're before where we need to be
-      dir = true;
-      steps = tSteps - xPos;
+    if (yRemaining){
+      digitalWrite(yMotor, HIGH);
+      digitalWrite(yMotor, LOW);
+      delay(10);
+      //Serial.write("ystep");
+      yRemaining--;
     }
-    else if (xPos == tSteps){ //We dont need to step at all!
-      steps =0;
+    if(Serial.available() >= 6){
+      break;
     }
-    
-    xPos = tSteps;//update the position of the motor
-    tSteps = 0;
-    stepMotor(xMotor, dir, int(steps));
   }
-  
-  if(mot=='y'){
-    if(max(yPos, tSteps)==yPos){//We're past the position we need to be
-      dir = false;
-    steps = yPos - tSteps;
-      
-    }
-    else if(max(yPos, tSteps)==tSteps){ //we're before where we need to be
-      dir = true;
-      steps = tSteps - yPos;
-    }
-    else if (yPos == tSteps){ //We dont need to step at all!
-      steps =0;
-    }
-    
-    yPos = tSteps;//update the position of the motor
-    tSteps = 0;
-    stepMotor(yMotor, dir, steps);
-  }
-  
+  digitalWrite(laser,HIGH);
 }
 
-//Step the motor
-//NB: THERE ARE 400 STEPS ON THE MOTOR USED - MAP TO THE CORRECT AMOUNT
-void stepMotor(byte motor, boolean dir, int amount){
-  //Set the correct direction
-  if(motor == xMotor)
-    digitalWrite(xDir, dir);
-  else
-    digitalWrite(yDir, dir);
-    
-  //Step the motor  
-  for(int i=0;i<amount;i++){
-    digitalWrite(motor, HIGH);
-    digitalWrite(motor, LOW);
-    delay(38);
-  }
-  
-}
+
